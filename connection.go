@@ -34,11 +34,6 @@ type Connection struct {
 	pool *Pool
 }
 
-var upgrader = gws.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-}
-
 func NewClient(urlStr string, origin string, maxConn []int, options ...OptAuth) (*Pool, error) {
 	// Check if connection is possible
 	_, err := websocket.Dial(urlStr, "", origin)
@@ -62,42 +57,46 @@ func NewClient(urlStr string, origin string, maxConn []int, options ...OptAuth) 
 		if err != nil {
 			return nil, err
 		}
-		conn := Connection{
-			id:   i,
-			ws:   ws,
-			pool: pool,
-		}
-		pool.Connections <- conn
+		pool.addConnToPool(i, ws)
 	}
 	return pool, nil
 }
 
 func (p *Pool) createSocket() (*gws.Conn, error) {
-	dialer := gws.Dialer{
-		NetDial:           nil,
-		NetDialContext:    nil,
-		Proxy:             nil,
-		TLSClientConfig:   nil,
-		HandshakeTimeout:  0,
-		ReadBufferSize:    0,
-		WriteBufferSize:   0,
-		WriteBufferPool:   nil,
-		Subprotocols:      nil,
-		EnableCompression: false,
-		Jar:               nil,
-	}
 	reqHeader := http.Header{}
 	reqHeader.Add("Origin", p.origin)
-	ws, _, err := dialer.Dial(p.urlStr, reqHeader)
-	//ws, err := websocket.Dial(p.urlStr, "", p.origin)
+	ws, _, err := gws.Dialer{}.Dial(p.urlStr, reqHeader)
 	if err != nil {
 		return nil, err
 	}
 	return ws, nil
 }
 
+
+func (p *Pool) addConnToPool(id int, ws *gws.Conn) {
+	newConn := Connection{
+		id:   id,
+		ws:   ws,
+		pool: p,
+	}
+	p.Connections <- newConn
+}
+
+func (p *Pool) checkWSHealth() error {
+	conn :=  <-p.Connections
+	if err := conn.ws.WriteMessage(gws.PingMessage, nil); err != nil {
+		ws, err := p.createSocket()
+		if err != nil {
+			return err
+		}
+		p.addConnToPool(conn.id, ws)
+	}
+	return nil
+}
+
+
 func (p *Pool) Get() (Connection, error) {
-	return <-p.Connections, nil
+	return <-p.Connections, p.checkWSHealth()
 }
 
 // Put - put used connection back to poll and get positive status if it's gone well
@@ -121,7 +120,7 @@ func (p *Pool) Exec(req *Request) ([]byte, error) {
 	}
 	// Open a TCP connection
 	// 2 is Binary messageType
-	if err := conn.ws.WriteMessage(2, requestMessage); err != nil {
+	if err := conn.ws.WriteMessage(gws.BinaryMessage, requestMessage); err != nil {
 		return nil, err
 	}
 
