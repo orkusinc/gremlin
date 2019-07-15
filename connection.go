@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
 	"time"
 
+	gws "github.com/gorilla/websocket"
 	"golang.org/x/net/websocket"
 )
 
@@ -27,9 +29,14 @@ const TheBigestMaxGremlinConnectionsLimit = 5
 
 type Connection struct {
 	id   int
-	ws   *websocket.Conn
+	ws   *gws.Conn
 	busy bool
 	pool *Pool
+}
+
+var upgrader = gws.Upgrader{
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
 }
 
 func NewClient(urlStr string, origin string, maxConn []int, options ...OptAuth) (*Pool, error) {
@@ -65,8 +72,24 @@ func NewClient(urlStr string, origin string, maxConn []int, options ...OptAuth) 
 	return pool, nil
 }
 
-func (p *Pool) createSocket() (*websocket.Conn, error) {
-	ws, err := websocket.Dial(p.urlStr, "", p.origin)
+func (p *Pool) createSocket() (*gws.Conn, error) {
+	dialer := gws.Dialer{
+		NetDial:           nil,
+		NetDialContext:    nil,
+		Proxy:             nil,
+		TLSClientConfig:   nil,
+		HandshakeTimeout:  0,
+		ReadBufferSize:    0,
+		WriteBufferSize:   0,
+		WriteBufferPool:   nil,
+		Subprotocols:      nil,
+		EnableCompression: false,
+		Jar:               nil,
+	}
+	reqHeader := http.Header{}
+	reqHeader.Add("Origin", p.origin)
+	ws, _, err := dialer.Dial(p.urlStr, reqHeader)
+	//ws, err := websocket.Dial(p.urlStr, "", p.origin)
 	if err != nil {
 		return nil, err
 	}
@@ -97,9 +120,14 @@ func (p *Pool) Exec(req *Request) ([]byte, error) {
 		return nil, err
 	}
 	// Open a TCP connection
-	if err := websocket.Message.Send(conn.ws, requestMessage); err != nil {
+	// 2 is Binary messageType
+	if err := conn.ws.WriteMessage(2, requestMessage); err != nil {
 		return nil, err
 	}
+
+	//if err := websocket.Message.Send(conn.ws, requestMessage); err != nil {
+	//	return nil, err
+	//}
 
 	data, err := conn.ReadResponse()
 	p.Put(conn)
@@ -114,9 +142,13 @@ func (c *Connection) ReadResponse() (data []byte, err error) {
 	for {
 		var res *Response
 
-		if err = websocket.JSON.Receive(c.ws, &res); err != nil {
+		if err = c.ws.ReadJSON(&res); err != nil {
 			return nil, err
 		}
+
+		//if err = websocket.JSON.Receive(c.ws, &res); err != nil {
+		//	return nil, err
+		//}
 
 		var items []json.RawMessage
 		switch res.Status.Code {
