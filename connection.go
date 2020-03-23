@@ -70,7 +70,7 @@ func (p *Pool) createSocket() (ws *websocket.Conn, err error) {
 	backoff.Retry(func() error {
 		ws, err = websocket.Dial(p.urlStr, "", p.origin)
 		return err
-	}, exponentialBackOff())
+	}, backoff.NewExponentialBackOff())
 	if err != nil {
 		p.logger.Log("socketCreateErr", err)
 		return ws, err
@@ -101,9 +101,14 @@ func (p *Pool) Exec(req *Request) ([]byte, error) {
 	conn := p.Get()
 	defer p.Put(conn)
 start:
-	if err := websocket.Message.Send(conn.ws, requestMessage); err != nil {
-		p.logger.Log("sendMessageErr", err)
-		return nil, err
+	err = websocket.Message.Send(conn.ws, requestMessage)
+	if err != nil {
+		conn.ws, err = p.createSocket()
+		if err != nil {
+			return nil, err
+		}
+		p.logger.Log("socketRecovered", conn.id)
+		goto start
 	}
 	data, err := conn.ReadResponse()
 	if err != nil {
@@ -302,7 +307,7 @@ func CreateConnection() (conn net.Conn, server *url.URL, err error) {
 	return
 }
 
-func exponentialBackOff() *backoff.ExponentialBackOff {
+func externalExponentialBackOff() *backoff.ExponentialBackOff {
 	b := &backoff.ExponentialBackOff{
 		InitialInterval:     128 * time.Millisecond,
 		RandomizationFactor: 0.5,
