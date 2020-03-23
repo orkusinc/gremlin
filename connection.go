@@ -306,25 +306,3 @@ func CreateConnection() (conn net.Conn, server *url.URL, err error) {
 	}
 	return
 }
-
-func externalExponentialBackOff() *backoff.ExponentialBackOff {
-	b := &backoff.ExponentialBackOff{
-		InitialInterval:     128 * time.Millisecond,
-		RandomizationFactor: 0.5,
-		Multiplier:          2,
-		MaxInterval:         512 * time.Millisecond,
-		MaxElapsedTime:      10 * time.Second,
-		Clock:               SystemClock,
-	}
-	b.Reset()
-	return b
-}
-
-type systemClock struct{}
-
-func (t systemClock) Now() time.Time {
-	return time.Now()
-}
-
-// SystemClock implements Clock interface that uses time.Now().
-var SystemClock = systemClock{}
