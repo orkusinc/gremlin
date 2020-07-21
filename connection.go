@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff"
-	"github.com/go-kit/kit/log"
 	"golang.org/x/net/websocket"
 )
 
@@ -25,7 +24,6 @@ type Pool struct {
 	MaxConnections int
 	Auth           []OptAuth
 	Connections    chan Connection
-	logger         log.Logger
 }
 
 type Connection struct {
@@ -35,12 +33,11 @@ type Connection struct {
 	pool *Pool
 }
 
-func NewClient(logger log.Logger, urlStr string, origin string, maxConn []int, options ...OptAuth) (*Pool, error) {
+func NewClient(urlStr string, origin string, maxConn []int, options ...OptAuth) (*Pool, error) {
 	pool := &Pool{
 		urlStr: urlStr,
 		origin: origin,
 		Auth:   options,
-		logger: logger,
 	}
 
 	// Can make maxConn as an optional since we already have optional arguments here
@@ -72,7 +69,6 @@ func (p *Pool) createSocket() (ws *websocket.Conn, err error) {
 		return err
 	}, backoff.NewExponentialBackOff())
 	if err != nil {
-		p.logger.Log("socketCreateErr", err)
 		return ws, err
 	}
 	return ws, nil
@@ -95,7 +91,6 @@ func (p *Pool) ExecQuery(query string) ([]byte, error) {
 func (p *Pool) Exec(req *Request) ([]byte, error) {
 	requestMessage, err := GraphSONSerializer(req)
 	if err != nil {
-		p.logger.Log("serializeRequestErr", err)
 		return nil, err
 	}
 	conn := p.Get()
@@ -107,21 +102,17 @@ start:
 		if err != nil {
 			return nil, err
 		}
-		p.logger.Log("socketRecovered", conn.id)
 		goto start
 	}
 	data, err := conn.ReadResponse()
 	if err != nil {
 		if err == io.EOF { // EOF err we are getting on connection loss
-			p.logger.Log("connectionLossErr", err)
 			conn.ws, err = p.createSocket()
 			if err != nil {
 				return nil, err
 			}
-			p.logger.Log("socketRecovered", conn.id)
 			goto start
 		} else {
-			p.logger.Log("readResponseErr", err)
 			return nil, err
 		}
 	}
